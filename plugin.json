@@ -1,0 +1,11 @@
+{
+  "name": "Zaparoo",
+  "author": "The Zaparoo Project Contributors",
+  "flags": [],
+  "api_version": 1,
+  "publish": {
+    "tags": ["utility", "nfc", "games"],
+    "description": "Control Zaparoo Core, monitor readers and media, and write NFC tags from Gaming Mode.",
+    "image": "https://raw.githubusercontent.com/ZaparooProject/zaparoo-decky/main/assets/icon.png"
+  }
+}

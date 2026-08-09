@@ -1,0 +1,30 @@
+# Dependencies and package-manager state
+node_modules/
+.pnpm-store/
+
+# Generated frontend and package output
+dist/
+out/
+
+# Python caches and test output
+*.py[cod]
+__pycache__/
+.pytest_cache/
+.coverage
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+
+# Editor and operating-system files
+.idea/
+.vscode/settings.json
+.DS_Store
+Thumbs.db
+*.swp
+.pi/
+
+# Decky development tooling
+cli/
+decky_plugin.py

@@ -1,0 +1,7 @@
+{
+  "include": ["main.py", "scripts"],
+  "exclude": ["node_modules", "dist", "out"],
+  "pythonVersion": "3.10",
+  "typeCheckingMode": "strict",
+  "reportMissingModuleSource": false
+}
