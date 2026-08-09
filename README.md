@@ -91,6 +91,7 @@ Use Node.js 20 or newer, pnpm 9, Python 3.10 or newer, and Ruff 0.16.x:
 
 ```bash
 pnpm install --frozen-lockfile
+python3 -m pip install --requirement requirements-dev.txt
 pnpm check
 pnpm package
 ```
