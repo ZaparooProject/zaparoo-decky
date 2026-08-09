@@ -391,7 +391,6 @@ export function normalizeBootstrapStatus(value: unknown): BootstrapStatus {
   const binaryInstalled = requiredBoolean(value.binaryInstalled);
   const serviceInstalled = requiredBoolean(value.serviceInstalled);
   const serviceActive = requiredBoolean(value.serviceActive);
-  const hardwareInstalled = requiredBoolean(value.hardwareInstalled);
   const action = value.action;
   const reason = optionalString(value, "reason");
   const version = value.version === undefined ? undefined : parseVersion(value.version);
@@ -407,7 +406,6 @@ export function normalizeBootstrapStatus(value: unknown): BootstrapStatus {
     binaryInstalled === undefined ||
     serviceInstalled === undefined ||
     serviceActive === undefined ||
-    hardwareInstalled === undefined ||
     typeof action !== "string" ||
     !BOOTSTRAP_ACTIONS.has(action as BootstrapStatus["action"]) ||
     reason === null ||
@@ -421,7 +419,6 @@ export function normalizeBootstrapStatus(value: unknown): BootstrapStatus {
     binaryInstalled,
     serviceInstalled,
     serviceActive,
-    hardwareInstalled,
     action: action as BootstrapStatus["action"],
     progress,
     ...(reason === undefined ? {} : { reason }),

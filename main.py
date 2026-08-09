@@ -43,7 +43,6 @@ MINIMUM_CORE_VERSION = (2, 17, 0)
 VERSION_PATTERN = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)$")
 VERSION_OUTPUT_PATTERN = re.compile(r"^Zaparoo v(\d+\.\d+\.\d+) \(steamos\)$")
 SYSTEMD_SERVICE_NAME = "zaparoo.service"
-HARDWARE_RULE_PATH = Path("/etc/udev/rules.d/60-zaparoo.rules")
 
 
 class CoreAPIError(RuntimeError):
@@ -65,6 +64,10 @@ def _semantic_version(value: str) -> tuple[int, int, int] | None:
         return None
     major, minor, patch = match.groups()
     return int(major), int(minor), int(patch)
+
+
+def _is_regular_file(path: Path) -> bool:
+    return path.is_file() and not path.is_symlink()
 
 
 def _read_bounded(response: BinaryIO, maximum_bytes: int) -> bytes:
@@ -303,7 +306,6 @@ class Plugin:
             "binaryInstalled": binary_installed,
             "serviceInstalled": service_installed,
             "serviceActive": service_active,
-            "hardwareInstalled": HARDWARE_RULE_PATH.is_file(),
             "action": action,
             "progress": dict(self._bootstrap_progress),
             **({"reason": reason} if reason is not None else {}),
@@ -410,7 +412,7 @@ class Plugin:
             await self._run_command(
                 "systemctl", "--user", "disable", "--now", SYSTEMD_SERVICE_NAME, timeout=10.0
             )
-        if binary.is_file() and not binary.is_symlink():
+        if await asyncio.to_thread(_is_regular_file, binary):
             with contextlib.suppress(CoreAPIError):
                 await self._run_command(str(binary), "-uninstall", "service", timeout=10.0)
             with contextlib.suppress(CoreAPIError):
@@ -459,7 +461,7 @@ class Plugin:
                         str(temporary_binary), "-install", "application", timeout=30.0
                     )
                     installed_application = True
-                    if not binary.is_file() or binary.is_symlink():
+                    if not await asyncio.to_thread(_is_regular_file, binary):
                         raise CoreAPIError(
                             "Core application installer did not create canonical binary"
                         )
@@ -502,7 +504,7 @@ class Plugin:
                     version = status.get("version")
                     return cast(dict[str, Any], version) if isinstance(version, dict) else {}
                 binary = self._canonical_binary()
-                if not binary.is_file() or binary.is_symlink():
+                if not await asyncio.to_thread(_is_regular_file, binary):
                     raise CoreAPIError("Core is not installed as a regular canonical binary")
                 version = await self._verify_binary(binary)
                 await self._set_bootstrap_progress(

@@ -11,6 +11,7 @@ Requirements:
 
 ```bash
 pnpm install --frozen-lockfile
+python3 -m pip install --requirement requirements-dev.txt
 pnpm check
 ```
 

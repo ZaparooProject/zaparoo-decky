@@ -34,7 +34,9 @@ jobs:
           cache: pnpm
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: |
+          pnpm install --frozen-lockfile
+          python3 -m pip install --disable-pip-version-check --requirement requirements-dev.txt
 
       - name: Lint Python with Ruff
         uses: astral-sh/ruff-action@278981a28ce3188b1e39527901f38254bf3aac89 # v4.1.0

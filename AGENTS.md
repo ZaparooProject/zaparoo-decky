@@ -10,7 +10,7 @@
 
 ## Commands
 
-- Install: `pnpm install --frozen-lockfile` using pnpm 9.
+- Install: `pnpm install --frozen-lockfile` using pnpm 9, then `python3 -m pip install --requirement requirements-dev.txt` for backend type dependencies.
 - Full check: `pnpm check`.
 - Package: `pnpm package`.
 - Frontend only: `pnpm typecheck && pnpm test && pnpm build`.
