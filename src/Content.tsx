@@ -1145,13 +1145,6 @@ export function Content() {
           label="Connected"
           value={status.readers ? readerCountLabel(readers.length) : "Unavailable"}
         />
-        {bootstrap && !bootstrap.hardwareInstalled && (
-          <StatusLine
-            label="NFC setup"
-            value="In Desktop Mode run: sudo ~/.local/bin/zaparoo -install hardware"
-            breakAll
-          />
-        )}
         {status.settings ? (
           <>
             <PanelSectionRow>
