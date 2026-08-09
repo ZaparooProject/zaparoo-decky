@@ -67,6 +67,10 @@ def _semantic_version(value: str) -> tuple[int, int, int] | None:
     return int(major), int(minor), int(patch)
 
 
+def _is_regular_file(path: Path) -> bool:
+    return path.is_file() and not path.is_symlink()
+
+
 def _read_bounded(response: BinaryIO, maximum_bytes: int) -> bytes:
     body = response.read(maximum_bytes + 1)
     if len(body) > maximum_bytes:
@@ -410,7 +414,7 @@ class Plugin:
             await self._run_command(
                 "systemctl", "--user", "disable", "--now", SYSTEMD_SERVICE_NAME, timeout=10.0
             )
-        if binary.is_file() and not binary.is_symlink():
+        if await asyncio.to_thread(_is_regular_file, binary):
             with contextlib.suppress(CoreAPIError):
                 await self._run_command(str(binary), "-uninstall", "service", timeout=10.0)
             with contextlib.suppress(CoreAPIError):
@@ -459,7 +463,7 @@ class Plugin:
                         str(temporary_binary), "-install", "application", timeout=30.0
                     )
                     installed_application = True
-                    if not binary.is_file() or binary.is_symlink():
+                    if not await asyncio.to_thread(_is_regular_file, binary):
                         raise CoreAPIError(
                             "Core application installer did not create canonical binary"
                         )
@@ -502,7 +506,7 @@ class Plugin:
                     version = status.get("version")
                     return cast(dict[str, Any], version) if isinstance(version, dict) else {}
                 binary = self._canonical_binary()
-                if not binary.is_file() or binary.is_symlink():
+                if not await asyncio.to_thread(_is_regular_file, binary):
                     raise CoreAPIError("Core is not installed as a regular canonical binary")
                 version = await self._verify_binary(binary)
                 await self._set_bootstrap_progress(
