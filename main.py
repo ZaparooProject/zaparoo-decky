@@ -43,7 +43,6 @@ MINIMUM_CORE_VERSION = (2, 17, 0)
 VERSION_PATTERN = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)$")
 VERSION_OUTPUT_PATTERN = re.compile(r"^Zaparoo v(\d+\.\d+\.\d+) \(steamos\)$")
 SYSTEMD_SERVICE_NAME = "zaparoo.service"
-HARDWARE_RULE_PATH = Path("/etc/udev/rules.d/60-zaparoo.rules")
 
 
 class CoreAPIError(RuntimeError):
@@ -307,7 +306,6 @@ class Plugin:
             "binaryInstalled": binary_installed,
             "serviceInstalled": service_installed,
             "serviceActive": service_active,
-            "hardwareInstalled": HARDWARE_RULE_PATH.is_file(),
             "action": action,
             "progress": dict(self._bootstrap_progress),
             **({"reason": reason} if reason is not None else {}),

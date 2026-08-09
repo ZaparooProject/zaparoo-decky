@@ -67,7 +67,7 @@ Core and plugin update independently:
 
 ### NFC hardware access
 
-Core software installation does not make root changes. If NFC hardware rules are absent, the Readers panel shows this separate Desktop Mode command:
+Core software installation does not make root changes. Users who need Linux device permissions for NFC hardware can run this separate Desktop Mode command:
 
 ```bash
 sudo ~/.local/bin/zaparoo -install hardware

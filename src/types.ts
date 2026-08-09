@@ -143,7 +143,6 @@ export interface BootstrapStatus {
   binaryInstalled: boolean;
   serviceInstalled: boolean;
   serviceActive: boolean;
-  hardwareInstalled: boolean;
   action: "none" | "install" | "start" | "unsupported";
   reason?: string;
   version?: VersionInfo;
