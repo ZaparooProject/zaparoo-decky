@@ -66,7 +66,6 @@ describe("bootstrap validation", () => {
       binaryInstalled: false,
       serviceInstalled: false,
       serviceActive: false,
-      hardwareInstalled: false,
       action: "install",
       progress: {
         phase: "downloading",
@@ -91,7 +90,6 @@ describe("bootstrap validation", () => {
         binaryInstalled: false,
         serviceInstalled: false,
         serviceActive: false,
-        hardwareInstalled: false,
         action: "replace-system",
         progress: { phase: "idle", busy: false, message: "" },
       }),

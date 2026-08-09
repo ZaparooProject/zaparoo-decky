@@ -90,7 +90,6 @@ function bootstrapStatus(overrides: Partial<BootstrapStatus> = {}): BootstrapSta
     binaryInstalled: true,
     serviceInstalled: true,
     serviceActive: true,
-    hardwareInstalled: true,
     action: "none",
     progress: { phase: "idle", busy: false, message: "" },
     ...overrides,
@@ -247,11 +246,9 @@ describe("Content", () => {
     await act(async () => renderer.unmount());
   });
 
-  it("shows bootstrap progress and NFC setup guidance", async () => {
-    mocks.getBootstrapStatus.mockResolvedValue(bootstrapStatus({ hardwareInstalled: false }));
+  it("shows bootstrap progress", async () => {
     const renderer = await renderStatus(completeStatus());
 
-    expect(text(renderer.root)).toContain("sudo ~/.local/bin/zaparoo -install hardware");
     act(() => {
       mocks.connectionListener?.(false);
       mocks.bootstrapListener?.({
