@@ -34,6 +34,13 @@ jobs:
           pnpm install --frozen-lockfile
           python3 -m pip install --disable-pip-version-check --requirement requirements-dev.txt
 
+      - name: Set up Ruff
+        # pnpm check runs lint:python, which needs ruff on PATH. Mirrors ci.yml.
+        uses: astral-sh/ruff-action@278981a28ce3188b1e39527901f38254bf3aac89 # v4.1.0
+        with:
+          version: "0.16.0"
+          args: --version
+
       - name: Verify tag matches package version
         run: test "${GITHUB_REF_NAME}" = "v$(node --print "require('./package.json').version")"
 
