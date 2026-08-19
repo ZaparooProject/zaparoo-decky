@@ -4,6 +4,7 @@ import type {
   BootstrapStatus,
   ClientPairing,
   CoreNotification,
+  LogUpload,
   OnlineLink,
   OnlineSettingsUpdate,
   PluginStatus,
@@ -14,15 +15,17 @@ import {
   normalizeBootstrapStatus,
   normalizeClientPairing,
   normalizeCoreNotification,
+  normalizeLogUpload,
   normalizeOnlineLink,
   normalizePluginStatus,
 } from "./validation";
 
 const getStatusCall = callable<[], unknown>("get_status");
 const getBootstrapStatusCall = callable<[], unknown>("get_bootstrap_status");
-const startClientPairingCall = callable<[], unknown>("start_client_pairing");
+const startClientPairingCall = callable<[secure: boolean], unknown>("start_client_pairing");
+const uploadLogsCall = callable<[], unknown>("upload_logs");
 const startOnlineLinkCall = callable<[], unknown>("start_online_link");
-const getOnlineLinkStatusCall = callable<[], unknown>("get_online_link_status");
+const getOnlineLinkStatusCall = callable<[workflowId: number], unknown>("get_online_link_status");
 
 export async function getStatus(): Promise<PluginStatus> {
   return normalizePluginStatus(await getStatusCall());
@@ -35,20 +38,26 @@ export const startCore = callable<[], unknown>("start_core");
 export const stopMedia = callable<[], void>("stop_media");
 export const writeTag = callable<[text: string, readerId?: string], void>("write_tag");
 export const cancelWrite = callable<[readerId?: string], void>("cancel_write");
-export const setEncryption = callable<[enabled: boolean], void>("set_encryption");
 export const securityPromptDismissed = callable<[], boolean>("security_prompt_dismissed");
 export const dismissSecurityPrompt = callable<[], void>("dismiss_security_prompt");
-export async function startClientPairing(): Promise<ClientPairing> {
-  return normalizeClientPairing(await startClientPairingCall());
+export async function startClientPairing(secure: boolean): Promise<ClientPairing> {
+  return normalizeClientPairing(await startClientPairingCall(secure));
 }
-export const cancelClientPairing = callable<[], void>("cancel_client_pairing");
+export const claimClientPairing = callable<[workflowId: number], void>("claim_client_pairing");
+export const cancelClientPairing = callable<[workflowId: number], void>("cancel_client_pairing");
+export const completeClientPairing = callable<[workflowId: number], void>("complete_client_pairing");
+export const expireClientPairing = callable<[workflowId: number], void>("expire_client_pairing");
+export async function uploadLogs(): Promise<LogUpload> {
+  return normalizeLogUpload(await uploadLogsCall());
+}
 export async function startOnlineLink(): Promise<OnlineLink> {
   return normalizeOnlineLink(await startOnlineLinkCall());
 }
-export async function getOnlineLinkStatus(): Promise<OnlineLink> {
-  return normalizeOnlineLink(await getOnlineLinkStatusCall());
+export async function getOnlineLinkStatus(workflowId: number): Promise<OnlineLink> {
+  return normalizeOnlineLink(await getOnlineLinkStatusCall(workflowId));
 }
-export const cancelOnlineLink = callable<[], void>("cancel_online_link");
+export const claimOnlineLink = callable<[workflowId: number], void>("claim_online_link");
+export const cancelOnlineLink = callable<[workflowId: number], void>("cancel_online_link");
 export const unlinkOnline = callable<[], void>("unlink_online");
 export const dismissInboxMessage = callable<[messageId: number], void>("dismiss_inbox_message");
 export const updateOnlineSettings = callable<[params: OnlineSettingsUpdate], void>(

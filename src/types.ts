@@ -64,10 +64,16 @@ export interface PairedClient {
 export interface ClientPairing {
   pin: string;
   expiresAt: number;
+  workflowId: number;
 }
+
+export type LogUpload =
+  | { outcome: "success"; url: string }
+  | { outcome: "unknown"; error: string };
 
 export interface OnlineLink {
   status: "none" | "pending" | "approved" | "failed" | "cancelled";
+  workflowId: number;
   userCode?: string;
   verificationUrl?: string;
   verificationUrlComplete?: string;
@@ -77,6 +83,7 @@ export interface OnlineLink {
 
 export interface RemoteBackupStatus {
   availability: "available" | "unavailable" | "unknown";
+  availabilityCheckedAt?: string;
   deviceName?: string;
   linkedAt?: string;
   lastStatus: string;
@@ -151,6 +158,7 @@ export interface BootstrapStatus {
 
 export interface PluginStatus {
   connected: boolean;
+  pluginVersion?: string;
   error?: string;
   version?: VersionInfo;
   readers?: { readers: ReaderInfo[] };

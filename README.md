@@ -77,6 +77,7 @@ sudo ~/.local/bin/zaparoo -install hardware
 
 - `plugin.json` requests no root or debug flags.
 - Normal backend calls target only Core's loopback API at `127.0.0.1:7497`.
+- **Upload logs** explicitly retrieves the current Core log through that API and sends up to 16 MiB to `https://logs.zaparoo.org/`. It never uploads automatically, follows no redirects, and preserves a returned share URL across temporary Quick Access closure. If a timeout occurs after transmission, the plugin reports that outcome as unknown because the service may have received the log. Core logs can contain device and activity details; share the URL only with trusted support staff. Zaparoo's [Privacy Policy](https://zaparoo.org/privacy/) applies to the upload service.
 - Explicit Core bootstrap contacts only GitHub API and versioned Zaparoo Core release assets.
 - Bootstrap runs only fixed Core and `systemctl --user` argument arrays; it never executes shell strings or requests sudo.
 - Reader access, media launching, account credentials, backups, and Online requests remain inside Core.

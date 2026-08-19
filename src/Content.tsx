@@ -1,30 +1,34 @@
 import {
-  ButtonItem,
+  ButtonItem as DeckyButtonItem,
   ConfirmModal,
-  DropdownItem,
+  DropdownItem as DeckyDropdownItem,
   Navigation,
   PanelSection,
   Router,
   PanelSectionRow,
   showModal,
-  ToggleField,
+  ToggleField as DeckyToggleField,
 } from "@decky/ui";
 import { toaster, useQuickAccessVisible } from "@decky/api";
 import { QRCodeSVG } from "qrcode.react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { ComponentProps, ReactNode } from "react";
 import {
   cancelClientPairing,
   cancelMediaDatabaseUpdate,
   cancelOnlineLink,
+  claimClientPairing,
+  claimOnlineLink,
   cancelWrite,
+  completeClientPairing,
   dismissInboxMessage,
   dismissSecurityPrompt,
   getBootstrapStatus,
   getOnlineLinkStatus,
   getStatus,
+  expireClientPairing,
   installCore,
   resumeMediaDatabaseUpdate,
-  setEncryption,
   securityPromptDismissed,
   startClientPairing,
   startCore,
@@ -35,11 +39,18 @@ import {
   subscribeCoreNotifications,
   unlinkOnline,
   updateMediaDatabase,
+  uploadLogs,
   updateOnlineSettings,
   updateReaderSettings,
   writeTag,
 } from "./api";
 import { coreCompatibility, MINIMUM_CORE_VERSION } from "./compatibility";
+import {
+  clearLogUploadResult,
+  getLogUploadState,
+  startLogUpload,
+  subscribeLogUpload,
+} from "./logUploadLifecycle";
 import {
   databaseProgressLabel,
   databaseProgressPercent,
@@ -51,6 +62,7 @@ import {
   pairingCountdown,
   readerCountLabel,
 } from "./display";
+import { closeModal, isModalLifecycleActive, registerModal } from "./modalLifecycle";
 import { indexingStatusFromNotification, notificationInvalidatesStatus } from "./notifications";
 import { hasNewClient } from "./pairing";
 import {
@@ -59,6 +71,7 @@ import {
   steamGamePageAppID,
   steamMediaValue,
 } from "./steam";
+import { UNKNOWN_PLUGIN_VERSION } from "./version";
 import type {
   BootstrapStatus,
   ClientPairing,
@@ -81,39 +94,112 @@ const BACKUP_SCHEDULE_OPTIONS = [
   { data: "manual", label: "Manual only" },
 ];
 
+function ButtonItem(props: ComponentProps<typeof DeckyButtonItem>) {
+  return <DeckyButtonItem {...props} bottomSeparator="none" />;
+}
+
+function DropdownItem(props: ComponentProps<typeof DeckyDropdownItem>) {
+  return <DeckyDropdownItem {...props} bottomSeparator="none" />;
+}
+
+function ToggleField(props: ComponentProps<typeof DeckyToggleField>) {
+  return <DeckyToggleField {...props} bottomSeparator="none" />;
+}
+
+function SecurityPromptDialog({
+  onSecure,
+  onDefer,
+  onDismiss,
+}: {
+  onSecure: () => void;
+  onDefer: () => void;
+  onDismiss: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | undefined>();
+
+  const run = (action: () => void) => {
+    setError(undefined);
+    try {
+      action();
+    } catch (actionError) {
+      setError(String(actionError).slice(0, 512));
+    }
+  };
+
+  const dismiss = async () => {
+    if (busy) return;
+    setBusy(true);
+    setError(undefined);
+    try {
+      await dismissSecurityPrompt();
+      onDismiss();
+    } catch (dismissError) {
+      setBusy(false);
+      setError(`Could not save security preference: ${String(dismissError).slice(0, 512)}`);
+    }
+  };
+
+  return (
+    <ConfirmModal
+      strTitle="Secure Zaparoo?"
+      strDescription={
+        <div>
+          Anyone on your network can currently send Zaparoo commands to this device.
+          <br /><br />
+          Secure it so only approved phones and apps can connect.
+          {error && <div style={{ marginTop: "8px", wordBreak: "break-word" }}>{error}</div>}
+        </div>
+      }
+      strOKButtonText="Secure Now"
+      strCancelButtonText="Not Now"
+      strMiddleButtonText={busy ? "Saving..." : "Don't Ask Again"}
+      bOKDisabled={busy}
+      bCancelDisabled={busy}
+      bMiddleDisabled={busy}
+      onOK={() => run(onSecure)}
+      onCancel={() => run(onDefer)}
+      onMiddleButton={() => void dismiss()}
+    />
+  );
+}
+
 function ClientPairingDialog({
   pairing,
   initialClientIDs,
-  revertEncryptionOnFailure,
   onFinished,
 }: {
   pairing: ClientPairing;
   initialClientIDs: ReadonlySet<string>;
-  revertEncryptionOnFailure: boolean;
   onFinished: () => void;
 }) {
   const [now, setNow] = useState(() => Date.now());
+  const [finishing, setFinishing] = useState(false);
+  const [error, setError] = useState<string | undefined>();
   const resolved = useRef(false);
+  const finishStarted = useRef(false);
 
   const finish = useCallback(async (paired: boolean, cancelApproval: boolean) => {
-    if (resolved.current) return;
-    resolved.current = true;
-    if (cancelApproval) {
-      try {
-        await cancelClientPairing();
-      } catch (error) {
-        console.error("Could not cancel Zaparoo client pairing", error);
+    if (resolved.current || finishStarted.current) return;
+    finishStarted.current = true;
+    setFinishing(true);
+    setError(undefined);
+    try {
+      if (paired) {
+        await completeClientPairing(pairing.workflowId);
+      } else if (cancelApproval) {
+        await cancelClientPairing(pairing.workflowId);
+      } else {
+        await expireClientPairing(pairing.workflowId);
       }
+      onFinished();
+      resolved.current = true;
+    } catch (finishError) {
+      finishStarted.current = false;
+      setFinishing(false);
+      setError(`Could not finish client pairing: ${String(finishError).slice(0, 512)}`);
     }
-    if (!paired && revertEncryptionOnFailure) {
-      try {
-        await setEncryption(false);
-      } catch (error) {
-        console.error("Could not restore Zaparoo encryption setting", error);
-      }
-    }
-    onFinished();
-  }, [onFinished, revertEncryptionOnFailure]);
+  }, [onFinished, pairing.workflowId]);
 
   useEffect(() => {
     const countdown = window.setInterval(() => {
@@ -128,7 +214,9 @@ function ClientPairingDialog({
             void finish(true, false);
           }
         })
-        .catch((error) => console.error("Could not check Zaparoo client pairing", error));
+        .catch((pollError) =>
+          setError(`Could not check client pairing: ${String(pollError).slice(0, 512)}`),
+        );
     }, 2_000);
     const unsubscribe = subscribeCoreNotifications((notification) => {
       if (notification.method === "clients.paired") void finish(true, false);
@@ -152,10 +240,13 @@ function ClientPairingDialog({
           <div style={{ marginTop: "8px", opacity: 0.75 }}>
             Expires in {pairingCountdown(pairing.expiresAt, now)}
           </div>
+          {error && <div style={{ marginTop: "8px", wordBreak: "break-word" }}>{error}</div>}
         </div>
       }
       bAlertDialog
-      strOKButtonText="Cancel"
+      strOKButtonText={finishing ? "Finishing..." : "Cancel"}
+      bOKDisabled={finishing}
+      bCancelDisabled={finishing}
       onOK={() => void finish(false, true)}
       onCancel={() => void finish(false, true)}
     />
@@ -231,6 +322,19 @@ function InboxDialog({
   );
 }
 
+function LogUploadDetails({ url }: { url: string }) {
+  return (
+    <div style={{ fontSize: "13px", textAlign: "center" }}>
+      <div style={{ background: "white", display: "inline-flex", padding: "5px" }}>
+        <QRCodeSVG value={url} size={136} marginSize={2} title="Zaparoo Core log URL" />
+      </div>
+      <div style={{ marginTop: "8px", overflowWrap: "anywhere", wordBreak: "break-all" }}>
+        {url}
+      </div>
+    </div>
+  );
+}
+
 function OnlineLinkDetails({ link }: { link: OnlineLink }) {
   const [now, setNow] = useState(() => Date.now());
   const qrValue = link.verificationUrlComplete || link.verificationUrl;
@@ -262,6 +366,66 @@ function OnlineLinkDetails({ link }: { link: OnlineLink }) {
         Linking uploads nothing until an Online feature is enabled.
       </div>
     </div>
+  );
+}
+
+function OnlineLinkDialog({
+  link,
+  onFinished,
+}: {
+  link: OnlineLink;
+  onFinished: (result: OnlineLink) => void;
+}) {
+  const [finishing, setFinishing] = useState(false);
+  const [error, setError] = useState<string | undefined>();
+  const resolved = useRef(false);
+  const finishStarted = useRef(false);
+  const finish = useCallback(async (result: OnlineLink, cancelApproval: boolean) => {
+    if (resolved.current || finishStarted.current) return;
+    finishStarted.current = true;
+    setFinishing(true);
+    setError(undefined);
+    try {
+      if (cancelApproval) await cancelOnlineLink(link.workflowId);
+      onFinished(result);
+      resolved.current = true;
+    } catch (finishError) {
+      finishStarted.current = false;
+      setFinishing(false);
+      setError(`Could not finish Online linking: ${String(finishError).slice(0, 512)}`);
+    }
+  }, [link.workflowId, onFinished]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      void getOnlineLinkStatus(link.workflowId)
+        .then((result) => {
+          setError(undefined);
+          if (result.status !== "pending") void finish(result, false);
+        })
+        .catch((pollError) =>
+          setError(`Could not check Online link status: ${String(pollError).slice(0, 512)}`),
+        );
+    }, 2_000);
+    return () => window.clearInterval(timer);
+  }, [finish, link.workflowId]);
+
+  return (
+    <ConfirmModal
+      strTitle="Link with Zaparoo Online"
+      strDescription={
+        <div>
+          <OnlineLinkDetails link={link} />
+          {error && <div style={{ marginTop: "8px", wordBreak: "break-word" }}>{error}</div>}
+        </div>
+      }
+      bAlertDialog
+      strOKButtonText={finishing ? "Finishing..." : "Cancel"}
+      bOKDisabled={finishing}
+      bCancelDisabled={finishing}
+      onOK={() => void finish({ status: "cancelled", workflowId: link.workflowId }, true)}
+      onCancel={() => void finish({ status: "cancelled", workflowId: link.workflowId }, true)}
+    />
   );
 }
 
@@ -381,18 +545,18 @@ export function Content() {
   const [gameWriting, setGameWriting] = useState(false);
   const [pairingError, setPairingError] = useState<string | undefined>();
   const [securityPromptIsDismissed, setSecurityPromptIsDismissed] = useState<boolean | undefined>();
-  const [onlineLink, setOnlineLink] = useState<OnlineLink | undefined>();
   const [onlineError, setOnlineError] = useState<string | undefined>();
   const [actionError, setActionError] = useState<string | undefined>();
+  const [logUploadPending, setLogUploadPending] = useState(
+    () => getLogUploadState().status === "pending",
+  );
   const writeCancelled = useRef(false);
   const gameWriteCancelled = useRef(false);
   const securityPromptShown = useRef(false);
   const onlineLinkModal = useRef<ReturnType<typeof showModal> | undefined>(undefined);
-  const pairingModal = useRef<ReturnType<typeof showModal> | undefined>(undefined);
   const inboxModal = useRef<ReturnType<typeof showModal> | undefined>(undefined);
   const securityModal = useRef<ReturnType<typeof showModal> | undefined>(undefined);
   const confirmationModal = useRef<ReturnType<typeof showModal> | undefined>(undefined);
-  const onlineLinkPolling = useRef(false);
   const notificationRefreshTimer = useRef<number | undefined>(undefined);
   const statusRef = useRef(status);
   const mounted = useRef(false);
@@ -484,28 +648,6 @@ export function Content() {
     mounted.current = true;
     return () => {
       mounted.current = false;
-      const cancelPairing = pairingModal.current !== undefined;
-      const cancelLink = onlineLinkModal.current !== undefined;
-      pairingModal.current?.Close();
-      inboxModal.current?.Close();
-      securityModal.current?.Close();
-      confirmationModal.current?.Close();
-      onlineLinkModal.current?.Close();
-      pairingModal.current = undefined;
-      inboxModal.current = undefined;
-      securityModal.current = undefined;
-      confirmationModal.current = undefined;
-      onlineLinkModal.current = undefined;
-      if (cancelPairing) {
-        void cancelClientPairing().catch((error) =>
-          console.error("Could not cancel Zaparoo client pairing during cleanup", error),
-        );
-      }
-      if (cancelLink) {
-        void cancelOnlineLink().catch((error) =>
-          console.error("Could not cancel Zaparoo Online link during cleanup", error),
-        );
-      }
     };
   }, []);
 
@@ -553,37 +695,6 @@ export function Content() {
     }
   }, [selectedReader, writers]);
 
-  useEffect(() => {
-    if (!onlineLink) return;
-    let stopped = false;
-    const poll = async () => {
-      if (onlineLinkPolling.current) return;
-      onlineLinkPolling.current = true;
-      try {
-        const result = await getOnlineLinkStatus();
-        if (stopped || result.status === "pending") return;
-        setOnlineLink(undefined);
-        onlineLinkModal.current?.Close();
-        onlineLinkModal.current = undefined;
-        if (result.status === "approved") {
-          setOnlineError(undefined);
-          await refresh();
-        } else {
-          setOnlineError(result.error || "Device linking did not complete.");
-        }
-      } catch (error) {
-        console.error("Could not check Zaparoo Online link status", error);
-      } finally {
-        onlineLinkPolling.current = false;
-      }
-    };
-    const timer = window.setInterval(() => void poll(), 2_000);
-    return () => {
-      stopped = true;
-      window.clearInterval(timer);
-    };
-  }, [onlineLink, refresh]);
-
   const runCoreBootstrap = async (action: () => Promise<unknown>) => {
     try {
       await action();
@@ -610,34 +721,60 @@ export function Content() {
 
   const confirmCoreInstall = () => {
     if (confirmationModal.current !== undefined || bootstrap?.progress.busy) return;
-    const modal = showModal(
-      <ConfirmModal
-        strTitle="Install Zaparoo Core?"
-        strDescription={
-          <div>
-            Downloads latest compatible SteamOS release from Zaparoo's GitHub repository, verifies
-            its SHA-256 digest, installs it to <code>~/.local/bin/zaparoo</code>, and enables a
-            systemd user service.
-            <br />
-            <br />
-            NFC hardware support is not installed automatically and requires a separate sudo
-            command in Desktop Mode.
-          </div>
-        }
-        strOKButtonText="Install Core"
-        strCancelButtonText="Cancel"
-        onOK={() => {
-          modal.Close();
-          confirmationModal.current = undefined;
-          void runCoreBootstrap(installCore);
-        }}
-        onCancel={() => {
-          modal.Close();
-          confirmationModal.current = undefined;
-        }}
-      />,
+    const modal = registerModal(
+      showModal(
+        <ConfirmModal
+          strTitle="Install Zaparoo Core?"
+          strDescription={
+            <div>
+              Downloads latest compatible SteamOS release from Zaparoo's GitHub repository,
+              verifies its SHA-256 digest, installs it to <code>~/.local/bin/zaparoo</code>, and
+              enables a systemd user service.
+              <br />
+              <br />
+              NFC hardware support is not installed automatically and requires a separate sudo
+              command in Desktop Mode.
+            </div>
+          }
+          strOKButtonText="Install Core"
+          strCancelButtonText="Cancel"
+          onOK={() => {
+            closeModal(modal);
+            confirmationModal.current = undefined;
+            void runCoreBootstrap(installCore);
+          }}
+          onCancel={() => {
+            closeModal(modal);
+            confirmationModal.current = undefined;
+          }}
+        />,
+      ),
     );
     confirmationModal.current = modal;
+  };
+
+  const showActionFailure = (message: string) => {
+    if (!mounted.current) return;
+    const bounded = message.slice(0, 512);
+    setActionError(bounded);
+    try {
+      const modal = registerModal(
+        showModal(
+          <ConfirmModal
+            strTitle="Action Failed"
+            strDescription={
+              <div style={{ overflowWrap: "anywhere", wordBreak: "break-word" }}>{bounded}</div>
+            }
+            bAlertDialog
+            strOKButtonText="Close"
+            onOK={() => closeModal(modal)}
+            onCancel={() => closeModal(modal)}
+          />,
+        ),
+      );
+    } catch (modalError) {
+      console.error("Could not show Zaparoo action failure", modalError);
+    }
   };
 
   const saveReaderSettings = async (params: ReaderSettingsUpdate) => {
@@ -646,7 +783,7 @@ export function Content() {
     try {
       await updateReaderSettings(params);
     } catch (error) {
-      if (mounted.current) setActionError(`Could not save reader setting: ${String(error)}`);
+      showActionFailure(`Could not save reader setting: ${String(error)}`);
     } finally {
       await refresh();
       if (mounted.current) setBusy(null);
@@ -659,12 +796,68 @@ export function Content() {
     try {
       await action();
     } catch (error) {
-      if (mounted.current) setActionError(`${name} failed: ${String(error)}`);
+      showActionFailure(`${name} failed: ${String(error)}`);
     } finally {
       await refresh();
       if (mounted.current) setBusy(null);
     }
   };
+
+  const beginLogUpload = () => {
+    setActionError(undefined);
+    startLogUpload(uploadLogs);
+  };
+
+  useEffect(() => subscribeLogUpload((uploadState) => {
+    setLogUploadPending(uploadState.status === "pending");
+    if (
+      uploadState.status !== "success" &&
+      uploadState.status !== "unknown" &&
+      uploadState.status !== "error"
+    ) {
+      return;
+    }
+    try {
+      let title: string;
+      let description: ReactNode;
+      if (uploadState.status === "success") {
+        title = "Core Logs Uploaded";
+        description = <LogUploadDetails url={uploadState.url} />;
+      } else if (uploadState.status === "unknown") {
+        title = "Upload Outcome Unknown";
+        setActionError(`Log upload outcome unknown: ${uploadState.error}`);
+        description = (
+          <div style={{ overflowWrap: "anywhere", wordBreak: "break-word" }}>
+            Upload service may have received Core log, but no share URL was returned. Wait before
+            retrying. Details: {uploadState.error}
+          </div>
+        );
+      } else {
+        title = "Log Upload Failed";
+        setActionError(`Log upload failed: ${uploadState.error}`);
+        description = (
+          <div style={{ overflowWrap: "anywhere", wordBreak: "break-word" }}>
+            Core log could not be uploaded: {uploadState.error}
+          </div>
+        );
+      }
+      const modal = registerModal(
+        showModal(
+          <ConfirmModal
+            strTitle={title}
+            strDescription={description}
+            bAlertDialog
+            strOKButtonText="Close"
+            onOK={() => closeModal(modal)}
+            onCancel={() => closeModal(modal)}
+          />,
+        ),
+      );
+      clearLogUploadResult();
+    } catch (modalError) {
+      console.error("Could not show Zaparoo log upload result", modalError);
+    }
+  }), []);
 
   const saveOnlineSettings = async (params: OnlineSettingsUpdate) => {
     setBusy("online-settings");
@@ -679,41 +872,67 @@ export function Content() {
     }
   };
 
-  const stopOnlineLink = async () => {
-    setOnlineLink(undefined);
-    onlineLinkModal.current?.Close();
-    onlineLinkModal.current = undefined;
-    try {
-      await cancelOnlineLink();
-    } catch (error) {
-      console.error("Could not cancel Zaparoo Online device link", error);
-    }
-  };
-
   const beginOnlineLink = async () => {
     setBusy("online-link");
     setOnlineError(undefined);
+    let workflowId: number | undefined;
     try {
       const link = await startOnlineLink();
+      workflowId = link.workflowId;
       if (!mounted.current) {
-        await cancelOnlineLink();
+        await cancelOnlineLink(workflowId);
         return;
       }
       if (link.status !== "pending" || (!link.verificationUrlComplete && !link.verificationUrl)) {
         throw new Error(link.error || "Core returned an invalid device link.");
       }
-      setOnlineLink(link);
-      onlineLinkModal.current = showModal(
-        <ConfirmModal
-          strTitle="Link with Zaparoo Online"
-          strDescription={<OnlineLinkDetails link={link} />}
-          bAlertDialog
-          strOKButtonText="Cancel"
-          onOK={() => void stopOnlineLink()}
-          onCancel={() => void stopOnlineLink()}
-        />,
+      const modal = registerModal(
+        showModal(
+          <OnlineLinkDialog
+            link={link}
+            onFinished={(result) => {
+              closeModal(modal);
+              onlineLinkModal.current = undefined;
+              if (!mounted.current) return;
+              if (result.status === "approved") {
+                setOnlineError(undefined);
+                void refresh();
+              } else if (result.status !== "cancelled") {
+                setOnlineError(result.error || "Device linking did not complete.");
+              }
+            }}
+          />,
+        ),
+        () => cancelOnlineLink(link.workflowId),
       );
+      onlineLinkModal.current = modal;
+      try {
+        await claimOnlineLink(link.workflowId);
+      } catch (claimError) {
+        try {
+          await cancelOnlineLink(link.workflowId);
+        } catch (cancelError) {
+          console.error("Could not resolve ambiguous Zaparoo Online link claim", cancelError);
+          if (mounted.current) {
+            setOnlineError(
+              `Online link ownership is uncertain; keep this dialog open: ${String(cancelError).slice(0, 512)}`,
+            );
+          }
+          return;
+        }
+        closeModal(modal);
+        onlineLinkModal.current = undefined;
+        if (mounted.current) setOnlineError(String(claimError).slice(0, 512));
+        return;
+      }
     } catch (error) {
+      if (workflowId !== undefined) {
+        try {
+          await cancelOnlineLink(workflowId);
+        } catch (cancelError) {
+          console.error("Could not roll back Zaparoo Online link startup", cancelError);
+        }
+      }
       if (mounted.current) setOnlineError(String(error));
     } finally {
       if (mounted.current) setBusy(null);
@@ -722,38 +941,42 @@ export function Content() {
 
   const confirmOnlineUnlink = () => {
     if (confirmationModal.current !== undefined) return;
-    const modal = showModal(
-      <ConfirmModal
-        strTitle="Unlink from Zaparoo Online?"
-        strDescription="Automatic cloud backups will stop until this device is linked again."
-        strOKButtonText="Unlink"
-        strCancelButtonText="Cancel"
-        bDestructiveWarning
-        onOK={() => {
-          modal.Close();
-          confirmationModal.current = undefined;
-          void runAction("online-unlink", unlinkOnline);
-        }}
-        onCancel={() => {
-          modal.Close();
-          confirmationModal.current = undefined;
-        }}
-      />,
+    const modal = registerModal(
+      showModal(
+        <ConfirmModal
+          strTitle="Unlink from Zaparoo Online?"
+          strDescription="Automatic cloud backups will stop until this device is linked again."
+          strOKButtonText="Unlink"
+          strCancelButtonText="Cancel"
+          bDestructiveWarning
+          onOK={() => {
+            closeModal(modal);
+            confirmationModal.current = undefined;
+            void runAction("online-unlink", unlinkOnline);
+          }}
+          onCancel={() => {
+            closeModal(modal);
+            confirmationModal.current = undefined;
+          }}
+        />,
+      ),
     );
     confirmationModal.current = modal;
   };
 
   const openInbox = () => {
     if (inboxModal.current !== undefined) return;
-    const modal = showModal(
-      <InboxDialog
-        initialMessages={inboxMessages}
-        onChanged={() => void refresh()}
-        onClose={() => {
-          modal.Close();
-          inboxModal.current = undefined;
-        }}
-      />,
+    const modal = registerModal(
+      showModal(
+        <InboxDialog
+          initialMessages={inboxMessages}
+          onChanged={() => void refresh()}
+          onClose={() => {
+            closeModal(modal);
+            inboxModal.current = undefined;
+          }}
+        />,
+      ),
     );
     inboxModal.current = modal;
   };
@@ -782,7 +1005,10 @@ export function Content() {
     try {
       await cancelWrite(selectedReader);
     } catch (error) {
-      console.error("Could not cancel Zaparoo tag write", error);
+      writeCancelled.current = false;
+      if (mounted.current) {
+        toaster.toast({ title: "Cancel tag write failed", body: String(error), critical: true });
+      }
     }
   };
 
@@ -813,41 +1039,61 @@ export function Content() {
     try {
       await cancelWrite(selectedReader);
     } catch (error) {
-      console.error("Could not cancel Zaparoo Steam tag write", error);
+      gameWriteCancelled.current = false;
+      if (mounted.current) {
+        toaster.toast({ title: "Cancel tag write failed", body: String(error), critical: true });
+      }
     }
   };
 
-  const beginClientPairing = async (secure = false) => {
+  const beginClientPairing = async (secure = false, allowDetached = false) => {
     setBusy("pair-client");
     setPairingError(undefined);
-    const enableEncryption = secure && status.settings?.encryption === false;
+    let workflowId: number | undefined;
     try {
-      if (enableEncryption) await setEncryption(true);
-      const clientPairing = await startClientPairing();
-      if (!mounted.current) {
-        await cancelClientPairing();
-        if (enableEncryption) await setEncryption(false);
+      const clientPairing = await startClientPairing(secure);
+      workflowId = clientPairing.workflowId;
+      if ((!mounted.current && !allowDetached) || !isModalLifecycleActive()) {
+        await cancelClientPairing(workflowId);
         return;
       }
-      const modal = showModal(
-        <ClientPairingDialog
-          pairing={clientPairing}
-          initialClientIDs={new Set(clients.map((client) => client.clientId))}
-          revertEncryptionOnFailure={enableEncryption}
-          onFinished={() => {
-            modal.Close();
-            pairingModal.current = undefined;
-            void refresh();
-          }}
-        />,
+      const modal = registerModal(
+        showModal(
+          <ClientPairingDialog
+            pairing={clientPairing}
+            initialClientIDs={new Set(clients.map((client) => client.clientId))}
+            onFinished={() => {
+              closeModal(modal);
+              void refresh();
+            }}
+          />,
+        ),
+        () => cancelClientPairing(clientPairing.workflowId),
       );
-      pairingModal.current = modal;
-    } catch (error) {
-      if (enableEncryption) {
+      try {
+        await claimClientPairing(clientPairing.workflowId);
+      } catch (claimError) {
         try {
-          await setEncryption(false);
-        } catch (restoreError) {
-          console.error("Could not restore Zaparoo encryption setting", restoreError);
+          await cancelClientPairing(clientPairing.workflowId);
+        } catch (cancelError) {
+          console.error("Could not resolve ambiguous Zaparoo client pairing claim", cancelError);
+          if (mounted.current) {
+            setPairingError(
+              `Client pairing ownership is uncertain; keep this dialog open: ${String(cancelError).slice(0, 512)}`,
+            );
+          }
+          return;
+        }
+        closeModal(modal);
+        if (mounted.current) setPairingError(String(claimError).slice(0, 512));
+        return;
+      }
+    } catch (error) {
+      if (workflowId !== undefined) {
+        try {
+          await cancelClientPairing(workflowId);
+        } catch (cancelError) {
+          console.error("Could not roll back Zaparoo client pairing startup", cancelError);
         }
       }
       if (mounted.current) setPairingError(String(error));
@@ -873,39 +1119,27 @@ export function Content() {
     }
 
     securityPromptShown.current = true;
-    const modal = showModal(
-      <ConfirmModal
-        strTitle="Secure Zaparoo?"
-        strDescription={
-          <div>
-            Anyone on your network can currently send Zaparoo commands to this device.
-            <br /><br />
-            Secure it so only approved phones and apps can connect.
-          </div>
-        }
-        strOKButtonText="Secure Now"
-        strCancelButtonText="Not Now"
-        strMiddleButtonText="Don't Ask Again"
-        onOK={() => {
-          securityPromptDeferred = true;
-          modal.Close();
-          securityModal.current = undefined;
-          void beginClientPairing(true);
-        }}
-        onCancel={() => {
-          securityPromptDeferred = true;
-          modal.Close();
-          securityModal.current = undefined;
-        }}
-        onMiddleButton={() => {
-          modal.Close();
-          securityModal.current = undefined;
-          setSecurityPromptIsDismissed(true);
-          void dismissSecurityPrompt().catch((error) => {
-            console.error("Could not dismiss Zaparoo security prompt", error);
-          });
-        }}
-      />,
+    const modal = registerModal(
+      showModal(
+        <SecurityPromptDialog
+          onSecure={() => {
+            securityPromptDeferred = true;
+            closeModal(modal);
+            securityModal.current = undefined;
+            void beginClientPairing(true, true);
+          }}
+          onDefer={() => {
+            securityPromptDeferred = true;
+            closeModal(modal);
+            securityModal.current = undefined;
+          }}
+          onDismiss={() => {
+            closeModal(modal);
+            securityModal.current = undefined;
+            setSecurityPromptIsDismissed(true);
+          }}
+        />,
+      ),
     );
     securityModal.current = modal;
   }, [
@@ -925,6 +1159,10 @@ export function Content() {
         <StatusLine
           label="Status"
           value={progress?.busy ? progress.message : bootstrap ? "Not connected" : "Checking installation…"}
+        />
+        <StatusLine
+          label="Plugin version"
+          value={status.pluginVersion ?? UNKNOWN_PLUGIN_VERSION}
         />
         {bootstrap?.reason && <StatusLine label="Bootstrap" value={bootstrap.reason} />}
         {progress?.error && <StatusLine label="Install error" value={progress.error} breakAll />}
@@ -960,6 +1198,10 @@ export function Content() {
     return (
       <PanelSection title="Zaparoo Core">
         <StatusLine label="Core version" value={status.version?.version ?? "Unknown"} />
+        <StatusLine
+          label="Plugin version"
+          value={status.pluginVersion ?? UNKNOWN_PLUGIN_VERSION}
+        />
         <StatusLine
           label="Compatibility"
           value={compatibility.message ?? `Core ${MINIMUM_CORE_VERSION} or newer required`}
@@ -1232,7 +1474,9 @@ export function Content() {
                     label="Automatic cloud backup"
                     description={
                       remoteBackup?.availability === "unknown"
-                        ? "Checking Warp status…"
+                        ? remoteBackup.availabilityCheckedAt
+                          ? "Warp status unavailable. Check network connection."
+                          : "Checking Warp status…"
                         : cloudBackupAvailable
                           ? undefined
                           : status.settings.backupRemoteEnabled
@@ -1277,12 +1521,25 @@ export function Content() {
 
       <PanelSection title="About">
         <StatusLine label="Core version" value={status.version?.version ?? "Unknown"} />
+        <StatusLine
+          label="Plugin version"
+          value={status.pluginVersion ?? UNKNOWN_PLUGIN_VERSION}
+        />
         <PanelSectionRow>
           <ButtonItem
             layout="below"
             onClick={openWebUI}
           >
             Open Web UI
+          </ButtonItem>
+        </PanelSectionRow>
+        <PanelSectionRow>
+          <ButtonItem
+            layout="below"
+            disabled={busy !== null || logUploadPending}
+            onClick={beginLogUpload}
+          >
+            {logUploadPending ? "Uploading logs…" : "Upload logs"}
           </ButtonItem>
         </PanelSectionRow>
       </PanelSection>
