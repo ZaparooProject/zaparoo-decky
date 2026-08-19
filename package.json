@@ -1,6 +1,6 @@
 {
   "name": "zaparoo-decky",
-  "version": "0.1.1-dev.21",
+  "version": "1.0.0",
   "description": "Controller-native Zaparoo Core companion for Decky Loader",
   "type": "module",
   "scripts": {
