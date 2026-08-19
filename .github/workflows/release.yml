@@ -39,6 +39,11 @@ jobs:
         uses: astral-sh/ruff-action@278981a28ce3188b1e39527901f38254bf3aac89 # v4.1.0
         with:
           version: "0.16.0"
+          # v4.1.0 ships known checksums only up to 0.15.20, and the action
+          # downloads from the Astral CDN mirror, so 0.16.0 would otherwise be
+          # installed unverified. SHA-256 of ruff-x86_64-unknown-linux-gnu.tar.gz
+          # (ubuntu-latest target) from the ruff 0.16.0 release assets.
+          checksum: "98001c995a134d95f9bc83106a7f94b552971b583f1c0ab75fb656a881e13865"
           args: --version
 
       - name: Verify tag matches package version
