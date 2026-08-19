@@ -7,6 +7,7 @@ import type {
   CoreNotification,
   CoreSettings,
   DatabaseStatus,
+  LogUpload,
   InboxMessage,
   OnlineLink,
   PairedClient,
@@ -19,6 +20,7 @@ import type {
 
 const MAX_COLLECTION_ITEMS = 512;
 const MAX_SHORT_TEXT_LENGTH = 4_096;
+const MAX_LOG_UPLOAD_URL_BYTES = 2_048;
 const MAX_BODY_LENGTH = 65_536;
 const MAX_ZAP_SCRIPT_LENGTH = 65_536;
 const BOOTSTRAP_PHASES = new Set<BootstrapProgress["phase"]>([
@@ -279,6 +281,7 @@ function parseRemoteBackup(value: unknown): RemoteBackupStatus | undefined {
     availabilityValue === "unknown"
       ? availabilityValue
       : undefined;
+  const availabilityCheckedAt = optionalString(value, "availabilityCheckedAt", 128);
   const deviceName = optionalString(value, "deviceName", 1_024);
   const linkedAt = optionalString(value, "linkedAt", 128);
   const schedule = optionalString(value, "schedule", 128);
@@ -287,6 +290,7 @@ function parseRemoteBackup(value: unknown): RemoteBackupStatus | undefined {
   const enabled = requiredBoolean(value.enabled);
   if (
     availability === undefined ||
+    availabilityCheckedAt === null ||
     deviceName === null ||
     linkedAt === null ||
     schedule === null ||
@@ -299,6 +303,7 @@ function parseRemoteBackup(value: unknown): RemoteBackupStatus | undefined {
   return {
     availability,
     lastStatus,
+    ...(availabilityCheckedAt === undefined ? {} : { availabilityCheckedAt }),
     linked,
     enabled,
     ...(deviceName === undefined ? {} : { deviceName }),
@@ -427,18 +432,28 @@ export function normalizeBootstrapStatus(value: unknown): BootstrapStatus {
 }
 
 export function normalizePluginStatus(value: unknown): PluginStatus {
+  const pluginVersion = isRecord(value) ? stringValue(value.pluginVersion, 64) : undefined;
+  const pluginVersionField = pluginVersion === undefined ? {} : { pluginVersion };
   if (!isRecord(value) || value.connected !== true) {
     const error = isRecord(value) ? stringValue(value.error) : undefined;
-    return { connected: false, error: error ?? "Invalid response from Decky backend" };
+    return {
+      connected: false,
+      ...pluginVersionField,
+      error: error ?? "Invalid response from Decky backend",
+    };
   }
 
   const version = parseVersion(value.version);
   if (version === undefined) {
-    return { connected: false, error: "Core returned invalid version information" };
+    return {
+      connected: false,
+      ...pluginVersionField,
+      error: "Core returned invalid version information",
+    };
   }
 
   const errors = parseErrors(value.errors);
-  const status: PluginStatus = { connected: true, version, errors };
+  const status: PluginStatus = { connected: true, ...pluginVersionField, version, errors };
   const sections: Array<[
     keyof Pick<PluginStatus, "readers" | "tokens" | "media" | "settings" | "clients" | "backup" | "inbox">,
     (section: unknown) => unknown,
@@ -492,22 +507,71 @@ export function normalizePluginStatus(value: unknown): PluginStatus {
   return status;
 }
 
+function workflowId(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0
+    ? value
+    : undefined;
+}
+
 export function normalizeClientPairing(value: unknown): ClientPairing {
   if (!isRecord(value)) throw new Error("Core returned invalid client pairing details");
   const pin = stringValue(value.pin, 64);
   const expiresAt = nonNegativeNumber(value.expiresAt);
-  if (pin === undefined || expiresAt === undefined) {
+  const id = workflowId(value.workflowId);
+  if (pin === undefined || expiresAt === undefined || id === undefined) {
     throw new Error("Core returned invalid client pairing details");
   }
-  return { pin, expiresAt };
+  return { pin, expiresAt, workflowId: id };
 }
 
-function webURL(value: unknown): string | undefined {
+export function normalizeLogUpload(value: unknown): LogUpload {
+  if (!isRecord(value)) throw new Error("Log upload returned an invalid result");
+  if (value.outcome === "unknown") {
+    const error = stringValue(value.error, 512);
+    if (error === undefined || !error.trim()) {
+      throw new Error("Log upload returned an invalid result");
+    }
+    return { outcome: "unknown", error };
+  }
+  if (value.outcome !== "success") throw new Error("Log upload returned an invalid result");
+  const url = stringValue(value.url, MAX_LOG_UPLOAD_URL_BYTES);
+  if (
+    url === undefined ||
+    new TextEncoder().encode(url).byteLength > MAX_LOG_UPLOAD_URL_BYTES
+  ) {
+    throw new Error("Log upload returned an invalid result");
+  }
+  try {
+    const parsed = new URL(url);
+    if (
+      parsed.protocol !== "https:" ||
+      parsed.hostname !== "logs.zaparoo.org" ||
+      (parsed.port !== "" && parsed.port !== "443") ||
+      parsed.username !== "" ||
+      parsed.password !== "" ||
+      parsed.pathname.replace(/\//g, "") === ""
+    ) {
+      throw new Error("invalid URL");
+    }
+  } catch {
+    throw new Error("Log upload returned an invalid result");
+  }
+  return { outcome: "success", url };
+}
+
+function onlineVerificationURL(value: unknown): string | undefined {
   const candidate = stringValue(value, 4_096);
   if (candidate === undefined) return undefined;
   try {
-    const protocol = new URL(candidate).protocol;
-    return protocol === "https:" || protocol === "http:" ? candidate : undefined;
+    const parsed = new URL(candidate);
+    return parsed.protocol === "https:" &&
+      parsed.hostname === "online.zaparoo.com" &&
+      (parsed.port === "" || parsed.port === "443") &&
+      parsed.username === "" &&
+      parsed.password === "" &&
+      parsed.pathname.replace(/\//g, "") !== ""
+      ? candidate
+      : undefined;
   } catch {
     return undefined;
   }
@@ -525,13 +589,20 @@ export function normalizeOnlineLink(value: unknown): OnlineLink {
   ) {
     throw new Error("Core returned invalid Online link details");
   }
+  const id = workflowId(value.workflowId);
   const userCode = optionalString(value, "userCode", 64);
-  const verificationUrl = value.verificationUrl === undefined ? undefined : webURL(value.verificationUrl);
+  const verificationUrl =
+    value.verificationUrl === undefined
+      ? undefined
+      : onlineVerificationURL(value.verificationUrl);
   const verificationUrlComplete =
-    value.verificationUrlComplete === undefined ? undefined : webURL(value.verificationUrlComplete);
+    value.verificationUrlComplete === undefined
+      ? undefined
+      : onlineVerificationURL(value.verificationUrlComplete);
   const expiresAt = optionalString(value, "expiresAt", 128);
   const error = optionalString(value, "error");
   if (
+    id === undefined ||
     userCode === null ||
     (value.verificationUrl !== undefined && verificationUrl === undefined) ||
     (value.verificationUrlComplete !== undefined && verificationUrlComplete === undefined) ||
@@ -543,6 +614,7 @@ export function normalizeOnlineLink(value: unknown): OnlineLink {
   }
   return {
     status,
+    workflowId: id,
     ...(userCode === undefined ? {} : { userCode }),
     ...(verificationUrl === undefined ? {} : { verificationUrl }),
     ...(verificationUrlComplete === undefined ? {} : { verificationUrlComplete }),

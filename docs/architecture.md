@@ -27,6 +27,8 @@ Python backend, running as deck user
         |
         +---- 127.0.0.1:7497 ---- Zaparoo Core
         |
+        +---- explicit Upload logs ---- logs.zaparoo.org
+        |
         +---- explicit bootstrap ---- GitHub release + user-local Core service
 ```
 
@@ -38,9 +40,9 @@ Steam context is read-only. The plugin checks Decky's running-app state first, t
 
 ### Backend
 
-`main.py` provides bounded asynchronous methods over Decky's callable API. Blocking `urllib` requests run in worker threads. All JSON-RPC calls target Core on loopback and use method-specific timeouts.
+`main.py` provides bounded asynchronous methods over Decky's callable API. Core JSON-RPC calls use `aiohttp` with total method-specific deadlines, exact loopback endpoint checks, and bounded response streaming.
 
-The notification task uses `aiohttp`, which is an existing Decky Loader runtime dependency, to connect to Core's loopback WebSocket. It forwards parsed JSON-RPC notifications and connection-state changes through Decky's event API, then reconnects with a bounded delay. A disconnect immediately moves the visible panel into its retry state; reconnect triggers a fresh snapshot.
+The notification task uses the same existing Decky Loader `aiohttp` runtime dependency to connect to Core's loopback WebSocket. It forwards parsed JSON-RPC notifications and connection-state changes through Decky's event API, then reconnects with a bounded delay. A disconnect immediately moves the visible panel into its retry state; reconnect triggers a fresh snapshot.
 
 When the user confirms **Install Core**, backend bootstrap:
 
@@ -68,6 +70,7 @@ Runtime traffic initiated directly by the plugin:
 | `http://127.0.0.1:7497/api/v0.1` | Core JSON-RPC requests |
 | `ws://127.0.0.1:7497/api/v0.1` | Core notification stream |
 | `http://127.0.0.1:7497/app/` | Full Core Web UI opened by explicit user action |
+| `https://logs.zaparoo.org/` | Upload up to 16 MiB of current Core log content only after the user selects **Upload logs**; no redirects are followed, and a bounded share URL is returned. Logs can contain device and activity details. See [Zaparoo Privacy Policy](https://zaparoo.org/privacy/). |
 | `https://api.github.com/repos/ZaparooProject/zaparoo-core/releases/latest` | Resolve compatible Core after install confirmation |
 | `https://github.com/ZaparooProject/zaparoo-core/releases/download/v*/zaparoo-steamos_amd64-*.tar.gz` | Download exact versioned Core release after validation |
 | GitHub release asset redirect hosts | Stream validated release bytes from GitHub infrastructure |
@@ -86,8 +89,11 @@ Manual plugin installation downloads packaged releases through Decky Loader or t
 - Partial snapshot: show available sections and retain per-section errors.
 - Notification disconnect: show reconnecting state immediately, reconnect, and fetch a fresh snapshot.
 - No writable reader: disable **Write to Tag** with an explanation.
-- Plugin unload: cancel backend notification task and remove frontend listeners and timers.
-- Core mutation failure: show inline error, except tag-write success or failure may use a toast.
+- Plugin unload: reject new work, detach notification forwarding, cancel active uploads and Core bootstrap, run bounded rollback for a started application install, stop workflow cleanup tasks, then reconcile tracked approvals within one three-second backend deadline. Decky stops the plugin event loop after `_unload` returns, so the backend does not await aiohttp WebSocket teardown and risk Decky's five-second SIGKILL fallback.
+- Core mutation failure: keep workflow modals actionable or show a failure modal, except tag-write success or failure may use a toast.
+- Log upload failure before connection: keep the log local, show a bounded failure modal, and return the button to idle. Concurrent upload requests are rejected.
+- Log upload timeout or response failure after transmission: report the outcome as unknown because the service may have stored the log without returning a share URL. Do not retry automatically.
+- Temporary Quick Access unmount during upload: retain pending state and present the terminal URL, unknown outcome, or definite error after remount without uploading again.
 
 ## Compatibility
 

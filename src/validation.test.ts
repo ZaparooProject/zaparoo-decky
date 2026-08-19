@@ -4,6 +4,7 @@ import {
   normalizeBootstrapStatus,
   normalizeClientPairing,
   normalizeCoreNotification,
+  normalizeLogUpload,
   normalizeOnlineLink,
   normalizePluginStatus,
   parseDatabaseStatus,
@@ -12,6 +13,7 @@ import {
 function validStatus(): Record<string, unknown> {
   return {
     connected: true,
+    pluginVersion: "0.1.1-dev.test",
     version: { version: "2.17.0", platform: "steamos" },
     errors: {},
     readers: {
@@ -49,6 +51,7 @@ function validStatus(): Record<string, unknown> {
     backup: {
       remote: {
         availability: "available",
+        availabilityCheckedAt: "2026-08-19T03:02:01Z",
         lastStatus: "success",
         linked: true,
         enabled: false,
@@ -102,9 +105,11 @@ describe("normalizePluginStatus", () => {
     const status = normalizePluginStatus(validStatus());
 
     expect(status.connected).toBe(true);
+    expect(status.pluginVersion).toBe("0.1.1-dev.test");
     expect(status.version).toEqual({ version: "2.17.0", platform: "steamos" });
     expect(status.readers?.readers[0]?.readerId).toBe("pn532-1");
     expect(status.media?.database.totalMedia).toBe(42);
+    expect(status.backup?.remote.availabilityCheckedAt).toBe("2026-08-19T03:02:01Z");
     expect(status.errors).toEqual({});
   });
 
@@ -189,27 +194,62 @@ describe("parseDatabaseStatus", () => {
 
 describe("direct callable validation", () => {
   it("validates pairing details", () => {
-    expect(normalizeClientPairing({ pin: "123456", expiresAt: 1_800_000_000 })).toEqual({
+    expect(
+      normalizeClientPairing({ pin: "123456", expiresAt: 1_800_000_000, workflowId: 1 }),
+    ).toEqual({
       pin: "123456",
       expiresAt: 1_800_000_000,
+      workflowId: 1,
     });
     expect(() => normalizeClientPairing({ pin: [], expiresAt: "later" })).toThrow("invalid");
   });
 
-  it("accepts only bounded HTTP verification URLs", () => {
+  it("accepts only bounded success URLs or unknown upload outcomes", () => {
+    expect(
+      normalizeLogUpload({
+        outcome: "success",
+        url: "https://logs.zaparoo.org/abc123.log",
+      }),
+    ).toEqual({ outcome: "success", url: "https://logs.zaparoo.org/abc123.log" });
+    expect(
+      normalizeLogUpload({ outcome: "unknown", error: "Service may have received log" }),
+    ).toEqual({ outcome: "unknown", error: "Service may have received log" });
+    expect(() =>
+      normalizeLogUpload({ outcome: "success", url: "https://example.com/abc123.log" }),
+    ).toThrow("invalid");
+    expect(() =>
+      normalizeLogUpload({
+        outcome: "success",
+        url: `https://logs.zaparoo.org/${"a".repeat(2_100)}`,
+      }),
+    ).toThrow("invalid");
+    expect(() => normalizeLogUpload({ outcome: "unknown", error: "" })).toThrow("invalid");
+  });
+
+  it("accepts only bounded official HTTPS verification URLs", () => {
     expect(
       normalizeOnlineLink({
         status: "pending",
+        workflowId: 2,
         userCode: "ABCD-1234",
         verificationUrl: "https://online.zaparoo.com/link",
       }),
-    ).toMatchObject({ status: "pending", userCode: "ABCD-1234" });
-    expect(() =>
-      normalizeOnlineLink({ status: "pending", verificationUrl: "javascript:alert(1)" }),
-    ).toThrow("invalid");
+    ).toMatchObject({ status: "pending", workflowId: 2, userCode: "ABCD-1234" });
+    for (const verificationUrl of [
+      "javascript:alert(1)",
+      "http://online.zaparoo.com/link",
+      "https://example.com/link",
+      "https://online.zaparoo.com.evil.example/link",
+      "https://user@online.zaparoo.com/link",
+    ]) {
+      expect(() =>
+        normalizeOnlineLink({ status: "pending", workflowId: 2, verificationUrl }),
+      ).toThrow("invalid");
+    }
     expect(() =>
       normalizeOnlineLink({
         status: "pending",
+        workflowId: 2,
         verificationUrl: "https://online.zaparoo.com/link",
         expiresAt: "not-a-date",
       }),
