@@ -50,7 +50,7 @@
     "react-test-renderer": "19.2.8",
     "rollup": "^4.53.3",
     "typescript": "^7.0.2",
-    "vitest": "^4.0.15"
+    "vitest": "^4.1.11"
   },
   "dependencies": {
     "@decky/api": "^1.1.3",
