@@ -6,6 +6,9 @@ import {
   formatPairingPIN,
   inboxSeverityLabel,
   lastScannedID,
+  updateActionDisabled,
+  updateActionLabel,
+  updateStatusLabel,
   onlineAccountLabel,
   pairingCountdown,
   readerCountLabel,
@@ -99,5 +102,120 @@ describe("lastScannedID", () => {
   it("hides API and duplicated IDs like Zaparoo App", () => {
     expect(lastScannedID({ ...token, uid: "__api__" })).toBeUndefined();
     expect(lastScannedID({ ...token, uid: "game" })).toBeUndefined();
+  });
+});
+
+describe("updateStatusLabel", () => {
+  it("says nothing is known when Core has not answered", () => {
+    expect(updateStatusLabel(undefined)).toBe("Unknown");
+  });
+
+  it("reports an available update", () => {
+    expect(
+      updateStatusLabel({
+        currentVersion: "2.10.0",
+        latestVersion: "2.11.0",
+        updateAvailable: true,
+        autoInstall: false,
+      }),
+    ).toBe("2.11.0 available");
+  });
+
+  // Being told a version exists without being told why it is not installing
+  // reads as something broken.
+  it("explains a staged rollout rather than just offering the version", () => {
+    expect(
+      updateStatusLabel({
+        currentVersion: "2.10.0",
+        latestVersion: "2.11.0",
+        updateAvailable: true,
+        rolloutHeld: true,
+        autoInstall: true,
+      }),
+    ).toBe("2.11.0 available, rolling out gradually");
+  });
+
+  // Something already happened to this device, so it outranks the offer.
+  it("puts a rollback ahead of an available update", () => {
+    expect(
+      updateStatusLabel({
+        currentVersion: "2.10.0",
+        latestVersion: "2.11.0",
+        updateAvailable: true,
+        autoInstall: true,
+        lastResult: { at: "2026-08-28T09:21:57Z", outcome: "rolledBack", toVersion: "2.11.0" },
+      }),
+    ).toBe("Update to 2.11.0 was rolled back");
+  });
+
+  it("does not announce an update that simply worked", () => {
+    expect(
+      updateStatusLabel({
+        currentVersion: "2.11.0",
+        updateAvailable: false,
+        autoInstall: false,
+        lastResult: { at: "2026-08-28T09:16:28Z", outcome: "succeeded", toVersion: "2.11.0" },
+      }),
+    ).toBe("Up to date");
+  });
+
+  it("says when Core will install on its own", () => {
+    expect(
+      updateStatusLabel({ currentVersion: "2.11.0", updateAvailable: false, autoInstall: true }),
+    ).toBe("Up to date, installs automatically");
+  });
+
+  it("explains why a development build never updates", () => {
+    expect(
+      updateStatusLabel({
+        currentVersion: "abc123-dev",
+        updateAvailable: false,
+        autoInstall: false,
+        eligibility: "development",
+      }),
+    ).toBe("Development build");
+  });
+});
+
+describe("updateActionLabel and updateActionDisabled", () => {
+  it("offers to install when there is something to install", () => {
+    const update = {
+      currentVersion: "2.10.0",
+      latestVersion: "2.11.0",
+      updateAvailable: true,
+      autoInstall: false,
+    };
+    expect(updateActionLabel(update)).toBe("Install Update");
+    expect(updateActionDisabled(update)).toBe(false);
+  });
+
+  it("offers to check when nothing is known to be available", () => {
+    const update = { currentVersion: "2.11.0", updateAvailable: false, autoInstall: false };
+    expect(updateActionLabel(update)).toBe("Check for Updates");
+    expect(updateActionDisabled(update)).toBe(false);
+  });
+
+  // The gate has already said no and explained itself in the status line.
+  it("cannot act through a gate that will not be forced", () => {
+    expect(
+      updateActionDisabled({
+        currentVersion: "2.10.0",
+        latestVersion: "2.11.0",
+        updateAvailable: true,
+        autoInstall: false,
+        blockedBy: { reason: "indexing", message: "media is being indexed", forceable: false },
+      }),
+    ).toBe(true);
+  });
+
+  it("cannot act where updates do not apply at all", () => {
+    expect(
+      updateActionDisabled({
+        currentVersion: "2.11.0",
+        updateAvailable: false,
+        autoInstall: false,
+        eligibility: "managed",
+      }),
+    ).toBe(true);
   });
 });

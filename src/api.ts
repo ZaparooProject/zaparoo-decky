@@ -9,6 +9,7 @@ import type {
   OnlineSettingsUpdate,
   PluginStatus,
   ReaderSettingsUpdate,
+  UpdateStatus,
 } from "./types";
 import {
   normalizeBootstrapProgress,
@@ -67,6 +68,13 @@ export const updateReaderSettings = callable<[params: ReaderSettingsUpdate], voi
 export const updateMediaDatabase = callable<[], void>("update_media_database");
 export const cancelMediaDatabaseUpdate = callable<[], void>("cancel_media_database_update");
 export const resumeMediaDatabaseUpdate = callable<[], void>("resume_media_database_update");
+// Core update controls. Status arrives with the ordinary status poll because
+// it is a local read; these two are the ones that cost something and so only
+// ever run from a button.
+export const checkForUpdate = callable<[], UpdateStatus>("check_for_update");
+export const applyUpdate = callable<[], { previousVersion: string; newVersion: string }>(
+  "apply_update",
+);
 
 const CORE_NOTIFICATION_EVENT = "core_notification";
 const CORE_CONNECTION_EVENT = "core_connection";

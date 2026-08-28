@@ -19,8 +19,10 @@ import {
   cancelOnlineLink,
   claimClientPairing,
   claimOnlineLink,
+  applyUpdate,
   cancelWrite,
   completeClientPairing,
+  checkForUpdate,
   dismissInboxMessage,
   dismissSecurityPrompt,
   getBootstrapStatus,
@@ -61,6 +63,9 @@ import {
   onlineAccountLabel,
   pairingCountdown,
   readerCountLabel,
+  updateActionDisabled,
+  updateActionLabel,
+  updateStatusLabel,
 } from "./display";
 import { closeModal, isModalLifecycleActive, registerModal } from "./modalLifecycle";
 import { indexingStatusFromNotification, notificationInvalidatesStatus } from "./notifications";
@@ -774,6 +779,31 @@ export function Content() {
       );
     } catch (modalError) {
       console.error("Could not show Zaparoo action failure", modalError);
+    }
+  };
+
+  // The plugin bootstraps Core and then stays out of the way: this asks Core to
+  // check or install, and Core owns the staging, the restart, and the rollback
+  // if the new version will not start.
+  const runUpdateAction = async () => {
+    setBusy("update");
+    setActionError(undefined);
+    try {
+      if (status.update?.updateAvailable) {
+        const applied = await applyUpdate();
+        showActionFailure(
+          `Zaparoo Core ${applied.newVersion} is installed and is restarting. ` +
+            "If it does not start correctly the previous version is restored automatically.",
+        );
+      } else {
+        const checked = await checkForUpdate();
+        if (!checked.updateAvailable) showActionFailure("Zaparoo Core is up to date.");
+      }
+    } catch (error) {
+      showActionFailure(`Could not update Zaparoo Core: ${String(error)}`);
+    } finally {
+      await refresh();
+      if (mounted.current) setBusy(null);
     }
   };
 
@@ -1521,10 +1551,20 @@ export function Content() {
 
       <PanelSection title="About">
         <StatusLine label="Core version" value={status.version?.version ?? "Unknown"} />
+        <StatusLine label="Updates" value={updateStatusLabel(status.update)} />
         <StatusLine
           label="Plugin version"
           value={status.pluginVersion ?? UNKNOWN_PLUGIN_VERSION}
         />
+        <PanelSectionRow>
+          <ButtonItem
+            layout="below"
+            disabled={busy !== null || updateActionDisabled(status.update)}
+            onClick={runUpdateAction}
+          >
+            {busy === "update" ? "Working…" : updateActionLabel(status.update)}
+          </ButtonItem>
+        </PanelSectionRow>
         <PanelSectionRow>
           <ButtonItem
             layout="below"
