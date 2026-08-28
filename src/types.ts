@@ -168,5 +168,28 @@ export interface PluginStatus {
   clients?: { clients: PairedClient[] };
   backup?: BackupStatus;
   inbox?: { messages: InboxMessage[] };
+  update?: UpdateStatus;
   errors?: Record<string, string>;
+}
+
+// UpdateStatus is Core's update.status response. The plugin bootstraps Core and
+// then leaves updating to it, so this only reports what Core already decided.
+export interface UpdateStatus {
+  currentVersion: string;
+  latestVersion?: string;
+  updateAvailable: boolean;
+  autoInstall: boolean;
+  rolloutHeld?: boolean;
+  channel?: string;
+  eligibility?: string;
+  checkedAt?: string;
+  deferredReason?: string;
+  blockedBy?: { reason: string; message: string; forceable: boolean };
+  lastResult?: {
+    at: string;
+    outcome: string;
+    fromVersion?: string;
+    toVersion?: string;
+    detail?: string;
+  };
 }

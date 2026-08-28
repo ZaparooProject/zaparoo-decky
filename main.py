@@ -841,9 +841,14 @@ class Plugin:
             self._rpc("clients"),
             self._rpc("settings.backup.status"),
             self._rpc("inbox"),
+            # Cheap on purpose: update.status reports what Core's last check
+            # found, without contacting the release server or writing anything,
+            # so it can ride along with the status poll instead of needing a
+            # button press to learn anything.
+            self._rpc("update.status"),
         )
         results = await asyncio.gather(*calls, return_exceptions=True)
-        keys = ("readers", "tokens", "media", "settings", "clients", "backup", "inbox")
+        keys = ("readers", "tokens", "media", "settings", "clients", "backup", "inbox", "update")
         status: dict[str, Any] = {
             "connected": True,
             "pluginVersion": PLUGIN_VERSION,
@@ -859,6 +864,17 @@ class Plugin:
 
     async def stop_media(self) -> Any:
         return await self._rpc("stop", timeout=5.0)
+
+    async def check_for_update(self) -> Any:
+        # The one update call that goes to the network. Only ever from a button,
+        # never from the status poll.
+        return await self._rpc("update.check", timeout=60.0)
+
+    async def apply_update(self) -> Any:
+        # Core stages, swaps the binary and restarts itself, which is well past
+        # the default timeout. The plugin only bootstraps Core; the update
+        # itself, and the rollback if it will not start, are Core's own.
+        return await self._rpc("update.apply", timeout=600.0)
 
     async def write_tag(self, text: str, reader_id: str | None = None) -> Any:
         params: dict[str, Any] = {"text": text}
